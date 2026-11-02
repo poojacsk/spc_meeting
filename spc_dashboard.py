@@ -150,7 +150,7 @@ xf = [x.strftime("%Y-%m-%d") for x in fdates]
 allx = xh + xf
 
 lab_red = f"Not capable  (Cpk < {t_red:.2f})"
-lab_amb = f"Marginal  ({t_red:.2f} – {t_green:.2f})"
+lab_amb = f"Optimal  ({t_red:.2f} – {t_green:.2f})"
 lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
 lab_fc = "7-day forecast"
 
