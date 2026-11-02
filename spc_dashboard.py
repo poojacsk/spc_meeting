@@ -66,37 +66,37 @@ def cpk_of(x: pd.Series, lsl: float, usl: float):
     return cp, cpk
 
 
-# ------------------------------------------------------------------ sidebar
-with st.sidebar:
-    st.header("Data & settings")
-    up = st.file_uploader("Upload CSV / TSV / Excel", type=["csv", "tsv", "txt", "xlsx"])
-    path = st.text_input("...or file path", "spc_data.csv")
-    st.subheader("Spec limits (mm)")
-    lsl = st.number_input("LSL", value=35.945, format="%.3f", step=0.001)
-    usl = st.number_input("USL", value=35.970, format="%.3f", step=0.001)
-    st.subheader("Cpk colour thresholds")
-    t_red = st.number_input("Red below", value=1.00, step=0.05)
-    t_green = st.number_input("Green at/above", value=1.33, step=0.01)
-    n_days = st.slider("Daily bars shown", 14, 120, 49)
-    alpha = st.slider("Forecast smoothing (EWMA α)", 0.05, 0.9, 0.3)
+# # ------------------------------------------------------------------ sidebar
+# with st.sidebar:
+#     st.header("Data & settings")
+#     up = st.file_uploader("Upload CSV / TSV / Excel", type=["csv", "tsv", "txt", "xlsx"])
+#     path = st.text_input("...or file path", "spc_data.csv")
+#     st.subheader("Spec limits (mm)")
+#     lsl = st.number_input("LSL", value=35.945, format="%.3f", step=0.001)
+#     usl = st.number_input("USL", value=35.970, format="%.3f", step=0.001)
+#     st.subheader("Cpk colour thresholds")
+#     t_red = st.number_input("Red below", value=1.00, step=0.05)
+#     t_green = st.number_input("Green at/above", value=1.33, step=0.01)
+#     n_days = st.slider("Daily bars shown", 14, 120, 49)
+#     alpha = st.slider("Forecast smoothing (EWMA α)", 0.05, 0.9, 0.3)
 
-if up is not None:
-    df = load(up, up.name)
-elif os.path.exists(path):
-    df = load(path, path)
-else:
-    st.markdown('<div class="banner"><h1>SPC Predictive Monitor</h1></div>',
-                unsafe_allow_html=True)
-    st.info("Upload your SPC data file (or set its path) in the sidebar.")
-    st.stop()
+# if up is not None:
+#     df = load(up, up.name)
+# elif os.path.exists(path):
+#     df = load(path, path)
+# else:
+#     st.markdown('<div class="banner"><h1>SPC Predictive Monitor</h1></div>',
+#                 unsafe_allow_html=True)
+#     st.info("Upload your SPC data file (or set its path) in the sidebar.")
+#     st.stop()
 
-with st.sidebar:
-    dmin, dmax = df["date"].min().date(), df["date"].max().date()
-    rng = st.date_input("Selected range", (dmin, dmax), min_value=dmin, max_value=dmax)
-if isinstance(rng, tuple) and len(rng) == 2:
-    sel = df[(df["date"] >= pd.Timestamp(rng[0])) & (df["date"] <= pd.Timestamp(rng[1]))]
-else:
-    sel = df
+# with st.sidebar:
+#     dmin, dmax = df["date"].min().date(), df["date"].max().date()
+#     rng = st.date_input("Selected range", (dmin, dmax), min_value=dmin, max_value=dmax)
+# if isinstance(rng, tuple) and len(rng) == 2:
+#     sel = df[(df["date"] >= pd.Timestamp(rng[0])) & (df["date"] <= pd.Timestamp(rng[1]))]
+# else:
+#     sel = df
 
 # --------------------------------------------------------------- calculations
 mean_od = sel["reading"].mean()
@@ -161,7 +161,7 @@ allx = xh + xf
 
 lab_red = f"Not capable  (Cpk < {t_red:.2f})"
 lab_amb = f"Marginal  ({t_red:.2f} – {t_green:.2f})"
-lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
+#lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
 lab_fc = "7-day forecast"
 
 hist["band"] = np.select([hist["cpk"] < t_red, hist["cpk"] < t_green],
