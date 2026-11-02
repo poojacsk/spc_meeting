@@ -149,10 +149,10 @@ xh = hist["date"].dt.strftime("%Y-%m-%d").tolist()
 xf = [x.strftime("%Y-%m-%d") for x in fdates]
 allx = xh + xf
 
-lab_red = f"Not capable  (Cpk < {t_red:.2f})"
-lab_amb = f"Marginal  ({t_red:.2f} – {t_green:.2f})"
-lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
-lab_fc = "7-day forecast"
+lab_red = f"Below capability  (Cpk < {t_red:.2f})"
+lab_amb = f"Optimal capability  ({t_red:.2f} – {t_green:.2f})"
+#lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
+lab_fc = "Forecast"
 
 hist["band"] = np.select([hist["cpk"] < t_red, hist["cpk"] < t_green],
                          [lab_red, lab_amb], default=lab_grn)
