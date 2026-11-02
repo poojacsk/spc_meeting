@@ -1,12 +1,12 @@
 """
-SPC Predictive Monitor  -  Streamlit + Plotly
+SPC Predictive Monitor  -  Streamlit + Altair
 Run:  streamlit run spc_dashboard.py --server.port 8502
 Data columns expected: SNo | SPC Reading | Date | Timestamp | Shift
 """
 import os
 import numpy as np
 import pandas as pd
-#import plotly.graph_objects as go
+import altair as alt
 import streamlit as st
 
 st.set_page_config(page_title="SPC Predictive Monitor", layout="wide")
@@ -159,40 +159,45 @@ xh = hist["date"].dt.strftime("%Y-%m-%d").tolist()
 xf = [x.strftime("%Y-%m-%d") for x in fdates]
 allx = xh + xf
 
-BANDS = [  # (legend label, colour, mask)
-    (f"Not capable  (Cpk < {t_red:.2f})", "#ef4444", hist["cpk"] < t_red),
-    (f"Marginal  ({t_red:.2f} – {t_green:.2f})", "#f59e0b",
-     (hist["cpk"] >= t_red) & (hist["cpk"] < t_green)),
-    (f"Capable  (Cpk ≥ {t_green:.2f})", "#22b35e", hist["cpk"] >= t_green),
-]
-fig = go.Figure()
-for label, colour, mask in BANDS:
-    d_ = hist[mask]
-    fig.add_bar(x=d_["date"].dt.strftime("%Y-%m-%d"), y=d_["cpk"], name=label,
-                marker_color=colour,
-                hovertemplate="%{x}<br>Daily Cpk %{y:.2f}<extra></extra>")
-fig.add_bar(x=xf, y=forecast_vals, name="7-day forecast", marker_color="#b9a0f7",
-            hovertemplate="%{x}<br>Forecast Cpk %{y:.2f}<extra></extra>")
-# dotted target line (shown in legend too)
-fig.add_scatter(x=[allx[0], allx[-1]], y=[t_green, t_green], mode="lines",
-                line=dict(color="#111", dash="dot", width=2),
-                name=f"Target Cpk = {t_green:.2f}", hoverinfo="skip")
+lab_red = f"Not capable  (Cpk < {t_red:.2f})"
+lab_amb = f"Marginal  ({t_red:.2f} – {t_green:.2f})"
+lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
+lab_fc = "7-day forecast"
+
+hist["band"] = np.select([hist["cpk"] < t_red, hist["cpk"] < t_green],
+                         [lab_red, lab_amb], default=lab_grn)
+cdf = pd.concat([
+    pd.DataFrame({"x": xh, "cpk": hist["cpk"].values, "band": hist["band"].values}),
+    pd.DataFrame({"x": xf, "cpk": forecast_vals, "band": lab_fc}),
+], ignore_index=True)
 
 ticks = allx[::7]
-ticktext = [f"{pd.Timestamp(t):%b} {pd.Timestamp(t).day}" for t in ticks]
-ticktext[0] += f"<br>{pd.Timestamp(ticks[0]).year}"
 ymax = max(2.0, float(np.nanmax(hist["cpk"])) * 1.1, t_green * 1.2)
-fig.update_layout(
-    title=dict(text="<b>Daily Cpk by date & 7-day forecast (next production days)</b>",
-               font=dict(size=15)),
-    height=430, bargap=0.2, barmode="overlay", template="plotly_white",
-    xaxis=dict(type="category", tickmode="array", tickvals=ticks,
-               ticktext=ticktext, title="Date"),
-    yaxis=dict(title="Cpk", range=[0, ymax]),
-    legend=dict(orientation="h", y=-0.30, x=0, title_text=""),
-    margin=dict(l=60, r=20, t=60, b=110))
+
+bars = alt.Chart(cdf).mark_bar().encode(
+    x=alt.X("x:O", sort=allx, title="Date",
+            axis=alt.Axis(values=ticks, labelAngle=0,
+                          labelExpr="timeFormat(toDate(datum.value), '%b %-d')")),
+    y=alt.Y("cpk:Q", title="Cpk", scale=alt.Scale(domain=[0, ymax])),
+    color=alt.Color("band:N", title=None,
+                    scale=alt.Scale(domain=[lab_red, lab_amb, lab_grn, lab_fc],
+                                    range=["#ef4444", "#f59e0b", "#22b35e", "#b9a0f7"]),
+                    legend=alt.Legend(orient="bottom", columns=2)),
+    tooltip=[alt.Tooltip("x:O", title="Date"), alt.Tooltip("band:N", title="Band"),
+             alt.Tooltip("cpk:Q", title="Cpk", format=".2f")],
+)
+target_rule = alt.Chart(pd.DataFrame({"y": [t_green]})).mark_rule(
+    color="#111", strokeDash=[2, 3], strokeWidth=2).encode(y="y:Q")
+target_txt = alt.Chart(pd.DataFrame({"y": [t_green], "t": [f"Target Cpk = {t_green:.2f}"]})
+                       ).mark_text(align="left", dx=4, dy=-8, color="#111", x=0
+                       ).encode(y="y:Q", text="t:N")
+fig = (bars + target_rule + target_txt).properties(
+    height=380,
+    title=alt.TitleParams("Daily Cpk by date & 7-day forecast (next production days)",
+                          fontSize=15, anchor="start"))
+
 st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-st.plotly_chart(fig, use_container_width=True)
+st.altair_chart(fig, use_container_width=True)
 # st.caption("Cpk guide: below 1.00 = process not capable (red) · 1.00–1.33 = marginal, "
 #            "needs attention (orange) · 1.33 and above = capable (green).")
 
@@ -205,16 +210,23 @@ names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 piv = piv.reindex([i for i in range(7) if i in piv.index])
 zmax = float(np.nanmax(np.abs(piv.values))) or 1.0
 
-hm = go.Figure(go.Heatmap(
-    z=piv.values, x=[f"{c}:00" for c in piv.columns],
-    y=[names[i] for i in piv.index], colorscale="RdBu_r", zmid=0,
-    zmin=-zmax, zmax=zmax,
-    colorbar=dict(title="µm", thickness=14, len=0.95),
-    hovertemplate="%{y} %{x}<br>%{z:.2f} µm<extra></extra>"))
-hm.update_layout(
-    title=dict(text="<b>Thermal heat-map – OD deviation (µm) by weekday × hour of day</b>",
-               font=dict(size=15)),
-    height=380, template="plotly_white",
-    xaxis=dict(type="category"), margin=dict(l=60, r=20, t=60, b=40))
-st.plotly_chart(hm, use_container_width=True)
+long = piv.reset_index().melt(id_vars="wd", var_name="hr", value_name="dev").dropna()
+long["day"] = long["wd"].map(lambda i: names[i])
+long["hour"] = long["hr"].map(lambda c: f"{int(c):02d}:00")
+hour_order = sorted(long["hour"].unique())
+day_order = [names[i] for i in piv.index]
+
+hm = alt.Chart(long).mark_rect().encode(
+    x=alt.X("hour:O", sort=hour_order, title="Hour of day"),
+    y=alt.Y("day:O", sort=day_order, title=None),
+    color=alt.Color("dev:Q", title="µm",
+                    scale=alt.Scale(scheme="redblue", reverse=True,
+                                    domain=[-zmax, zmax], domainMid=0)),
+    tooltip=[alt.Tooltip("day:O", title="Day"), alt.Tooltip("hour:O", title="Hour"),
+             alt.Tooltip("dev:Q", title="Deviation (µm)", format=".2f")],
+).properties(
+    height=340,
+    title=alt.TitleParams("Thermal heat-map – OD deviation (µm) by weekday × hour of day",
+                          fontSize=15, anchor="start"))
+st.altair_chart(hm, use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
