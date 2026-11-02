@@ -149,14 +149,10 @@ xh = hist["date"].dt.strftime("%Y-%m-%d").tolist()
 xf = [x.strftime("%Y-%m-%d") for x in fdates]
 allx = xh + xf
 
-lab_red = f"Less (Cpk < {t_red:.2f})"
-lab_amb = f"Marginal ({t_red:.2f} – {t_green:.2f})"
-lab_grn = f"Optimal (Cpk ≥ {t_green:.2f})"
-
-# lab_red = f"Less capability  (Cpk < {t_red:.2f})"
-# lab_amb = f"Good capability  ({t_red:.2f} – {t_green:.2f})"
-# lab_grn = f"Optimal capability  (Cpk ≥ {t_green:.2f})"
-lab_fc = "Forecast"
+lab_red = f"Not capable  (Cpk < {t_red:.2f})"
+lab_amb = f"Marginal  ({t_red:.2f} – {t_green:.2f})"
+lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
+lab_fc = "7-day forecast"
 
 hist["band"] = np.select([hist["cpk"] < t_red, hist["cpk"] < t_green],
                          [lab_red, lab_amb], default=lab_grn)
@@ -176,7 +172,9 @@ bars = alt.Chart(cdf).mark_bar().encode(
     color=alt.Color("band:N", title=None,
                     scale=alt.Scale(domain=[lab_red, lab_amb, lab_grn, lab_fc],
                                     range=["#ef4444", "#f59e0b", "#22b35e", "#b9a0f7"]),
-                    legend=alt.Legend(orient="bottom", columns=2)),
+                    legend=alt.Legend(orient="bottom", columns=3, labelLimit=0,
+                                      symbolType="square", labelFontSize=12,
+                                      values=[lab_red, lab_amb, lab_fc])),  # green hidden
     tooltip=[alt.Tooltip("x:O", title="Date"), alt.Tooltip("band:N", title="Band"),
              alt.Tooltip("cpk:Q", title="Cpk", format=".2f")],
 )
