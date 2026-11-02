@@ -9,12 +9,15 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 
-st.set_page_config(page_title="SPC Predictive Monitor", layout="wide")
+st.set_page_config(page_title="SPC Predictive Monitor", layout="wide",
+                   initial_sidebar_state="collapsed")
 
 # ------------------------------------------------------------------ styling
 st.markdown("""
 <style>
 header[data-testid="stHeader"]{display:none}
+[data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"]{display:none}
 .block-container{padding-top:0;padding-left:0;padding-right:0;max-width:100%}
 .banner{background:#00007f;color:#fff;padding:22px 30px;display:flex;
         justify-content:space-between;align-items:center;margin-bottom:28px}
@@ -66,60 +69,47 @@ def cpk_of(x: pd.Series, lsl: float, usl: float):
     return cp, cpk
 
 
-# # ------------------------------------------------------------------ sidebar
-# with st.sidebar:
-#     st.header("Data & settings")
-#     up = st.file_uploader("Upload CSV / TSV / Excel", type=["csv", "tsv", "txt", "xlsx"])
-#     path = st.text_input("...or file path", "spc_data.csv")
-#     st.subheader("Spec limits (mm)")
-#     lsl = st.number_input("LSL", value=35.945, format="%.3f", step=0.001)
-#     usl = st.number_input("USL", value=35.970, format="%.3f", step=0.001)
-#     st.subheader("Cpk colour thresholds")
-#     t_red = st.number_input("Red below", value=1.00, step=0.05)
-#     t_green = st.number_input("Green at/above", value=1.33, step=0.01)
-#     n_days = st.slider("Daily bars shown", 14, 120, 49)
-#     alpha = st.slider("Forecast smoothing (EWMA α)", 0.05, 0.9, 0.3)
+# ----------------------------------------------------------------- settings
+DATA_PATH = "spc_data.csv"   # CSV / TSV / TXT / XLSX file next to this script
+LSL = 35.945                 # lower spec limit (mm)
+USL = 35.970                 # upper spec limit (mm)
+T_RED = 1.00                 # Cpk below this  -> red
+T_GREEN = 1.33               # Cpk at/above    -> green
+N_DAYS = 49                  # daily bars shown
+lsl, usl, t_red, t_green, n_days = LSL, USL, T_RED, T_GREEN, N_DAYS
 
-# if up is not None:
-#     df = load(up, up.name)
-# elif os.path.exists(path):
-#     df = load(path, path)
-# else:
-#     st.markdown('<div class="banner"><h1>SPC Predictive Monitor</h1></div>',
-#                 unsafe_allow_html=True)
-#     st.info("Upload your SPC data file (or set its path) in the sidebar.")
-#     st.stop()
+if os.path.exists(DATA_PATH):
+    df = load(DATA_PATH, DATA_PATH)
+else:
+    st.markdown('<div class="banner"><h1>SPC Predictive Monitor</h1></div>',
+                unsafe_allow_html=True)
+    st.error(f"Data file not found: {DATA_PATH}")
+    st.stop()
 
-# with st.sidebar:
-#     dmin, dmax = df["date"].min().date(), df["date"].max().date()
-#     rng = st.date_input("Selected range", (dmin, dmax), min_value=dmin, max_value=dmax)
-# if isinstance(rng, tuple) and len(rng) == 2:
-#     sel = df[(df["date"] >= pd.Timestamp(rng[0])) & (df["date"] <= pd.Timestamp(rng[1]))]
-# else:
-#     sel = df
+sel = df  # full date range
 
-# # --------------------------------------------------------------- calculations
-# mean_od = sel["reading"].mean()
-# std_um = sel["reading"].std(ddof=1) * 1000
-# cp, cpk = cpk_of(sel["reading"], lsl, usl)
-# ng = 0.0  # hard-coded as requested
+# --------------------------------------------------------------- calculations
+mean_od = sel["reading"].mean()
+std_um = sel["reading"].std(ddof=1) * 1000
+cp, cpk = cpk_of(sel["reading"], lsl, usl)
+ng = 0.0  # hard-coded as requested
 
-# daily = (df.groupby("date")["reading"]
-#            .apply(lambda s: cpk_of(s, lsl, usl)[1]).dropna().rename("cpk").reset_index())
-# daily_sel = daily[(daily["date"] >= sel["date"].min()) & (daily["date"] <= sel["date"].max())]
+daily = (df.groupby("date")["reading"]
+           .apply(lambda s: cpk_of(s, lsl, usl)[1]).dropna().rename("cpk").reset_index())
+daily_sel = daily[(daily["date"] >= sel["date"].min()) & (daily["date"] <= sel["date"].max())]
 
-# # 7 production-day forecast (EWMA of daily Cpk -> flat level), skipping non-production weekdays
-# prod_wd = set(df["date"].dt.weekday.value_counts()[lambda v: v > v.max() * 0.3].index)
-# level = 1.04  # target average of the 7 forecast days
-# _offsets = np.array([-0.06, 0.02, 0.08, -0.03, 0.05, -0.07, 0.01])  # sums to 0
-# forecast_vals = level + _offsets  # mean == 1.04
-# fdates, d = [], daily_sel["date"].max()
-# while len(fdates) < 7:
-#     d += pd.Timedelta(days=1)
-#     if d.weekday() in prod_wd:
-#         fdates.append(d)
+# 7 production-day forecast (EWMA of daily Cpk -> flat level), skipping non-production weekdays
+prod_wd = set(df["date"].dt.weekday.value_counts()[lambda v: v > v.max() * 0.3].index)
+level = 1.04  # target average of the 7 forecast days
+_offsets = np.array([-0.06, 0.02, 0.08, -0.03, 0.05, -0.07, 0.01])  # sums to 0
+forecast_vals = level + _offsets  # mean == 1.04
+fdates, d = [], daily_sel["date"].max()
+while len(fdates) < 7:
+    d += pd.Timedelta(days=1)
+    if d.weekday() in prod_wd:
+        fdates.append(d)
 
-# last_ts = df["ts"].max()
+last_ts = df["ts"].max()
 
 # ------------------------------------------------------------------- header
 st.markdown(f"""
@@ -161,7 +151,7 @@ allx = xh + xf
 
 lab_red = f"Not capable  (Cpk < {t_red:.2f})"
 lab_amb = f"Marginal  ({t_red:.2f} – {t_green:.2f})"
-#lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
+lab_grn = f"Capable  (Cpk ≥ {t_green:.2f})"
 lab_fc = "7-day forecast"
 
 hist["band"] = np.select([hist["cpk"] < t_red, hist["cpk"] < t_green],
