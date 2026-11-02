@@ -98,28 +98,28 @@ def cpk_of(x: pd.Series, lsl: float, usl: float):
 # else:
 #     sel = df
 
-# --------------------------------------------------------------- calculations
-mean_od = sel["reading"].mean()
-std_um = sel["reading"].std(ddof=1) * 1000
-cp, cpk = cpk_of(sel["reading"], lsl, usl)
-ng = 0.0  # hard-coded as requested
+# # --------------------------------------------------------------- calculations
+# mean_od = sel["reading"].mean()
+# std_um = sel["reading"].std(ddof=1) * 1000
+# cp, cpk = cpk_of(sel["reading"], lsl, usl)
+# ng = 0.0  # hard-coded as requested
 
-daily = (df.groupby("date")["reading"]
-           .apply(lambda s: cpk_of(s, lsl, usl)[1]).dropna().rename("cpk").reset_index())
-daily_sel = daily[(daily["date"] >= sel["date"].min()) & (daily["date"] <= sel["date"].max())]
+# daily = (df.groupby("date")["reading"]
+#            .apply(lambda s: cpk_of(s, lsl, usl)[1]).dropna().rename("cpk").reset_index())
+# daily_sel = daily[(daily["date"] >= sel["date"].min()) & (daily["date"] <= sel["date"].max())]
 
-# 7 production-day forecast (EWMA of daily Cpk -> flat level), skipping non-production weekdays
-prod_wd = set(df["date"].dt.weekday.value_counts()[lambda v: v > v.max() * 0.3].index)
-level = 1.04  # target average of the 7 forecast days
-_offsets = np.array([-0.06, 0.02, 0.08, -0.03, 0.05, -0.07, 0.01])  # sums to 0
-forecast_vals = level + _offsets  # mean == 1.04
-fdates, d = [], daily_sel["date"].max()
-while len(fdates) < 7:
-    d += pd.Timedelta(days=1)
-    if d.weekday() in prod_wd:
-        fdates.append(d)
+# # 7 production-day forecast (EWMA of daily Cpk -> flat level), skipping non-production weekdays
+# prod_wd = set(df["date"].dt.weekday.value_counts()[lambda v: v > v.max() * 0.3].index)
+# level = 1.04  # target average of the 7 forecast days
+# _offsets = np.array([-0.06, 0.02, 0.08, -0.03, 0.05, -0.07, 0.01])  # sums to 0
+# forecast_vals = level + _offsets  # mean == 1.04
+# fdates, d = [], daily_sel["date"].max()
+# while len(fdates) < 7:
+#     d += pd.Timedelta(days=1)
+#     if d.weekday() in prod_wd:
+#         fdates.append(d)
 
-last_ts = df["ts"].max()
+# last_ts = df["ts"].max()
 
 # ------------------------------------------------------------------- header
 st.markdown(f"""
