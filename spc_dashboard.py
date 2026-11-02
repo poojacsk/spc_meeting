@@ -6,7 +6,7 @@ Data columns expected: SNo | SPC Reading | Date | Timestamp | Shift
 import os
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
+#import plotly.graph_objects as go
 import streamlit as st
 
 st.set_page_config(page_title="SPC Predictive Monitor", layout="wide")
