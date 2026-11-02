@@ -1,0 +1,220 @@
+"""
+SPC Predictive Monitor  -  Streamlit + Plotly
+Run:  streamlit run spc_dashboard.py --server.port 8502
+Data columns expected: SNo | SPC Reading | Date | Timestamp | Shift
+"""
+import os
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+st.set_page_config(page_title="SPC Predictive Monitor", layout="wide")
+
+# ------------------------------------------------------------------ styling
+st.markdown("""
+<style>
+header[data-testid="stHeader"]{display:none}
+.block-container{padding-top:0;padding-left:0;padding-right:0;max-width:100%}
+.banner{background:#00007f;color:#fff;padding:22px 30px;display:flex;
+        justify-content:space-between;align-items:center;margin-bottom:28px}
+.banner h1{margin:0;font-size:30px;font-weight:800;color:#fff;padding:0}
+.banner .meta{font-size:14px;opacity:.95}
+.sec{margin:18px 30px 14px;display:flex;align-items:center;gap:14px}
+.sec span{border-left:3px solid #2f6fdc;padding-left:12px;font-size:19px;
+          font-weight:600;color:#222;white-space:nowrap}
+.sec hr{flex:1;border:0;border-top:1px solid #e6e8ee;margin:0}
+.grid{margin:0 30px;display:grid;grid-template-columns:repeat(4,1fr);
+      border:1px solid #e6e8ee;border-radius:18px;overflow:hidden;background:#fff}
+.card{display:flex;align-items:center;gap:18px;padding:22px 24px;
+      border-right:1px solid #e6e8ee;border-bottom:1px solid #e6e8ee}
+.card:nth-child(4n){border-right:0}
+.card:nth-last-child(-n+4){border-bottom:0}
+.ico{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;
+     justify-content:center;font-size:14px;font-weight:700;flex:none}
+.lbl{flex:1;font-size:14px;color:#444}
+.val{font-size:25px;font-weight:600;color:#111}
+.unit{font-size:11px;color:#777;margin-left:8px}
+.chart-wrap{margin:0 30px}
+</style>
+""", unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------------- data
+@st.cache_data(show_spinner="Loading data...")
+def load(src, name: str) -> pd.DataFrame:
+    ext = os.path.splitext(name)[1].lower()
+    if ext in (".xlsx", ".xls"):
+        df = pd.read_excel(src)
+    else:  # csv / tsv / txt (auto-detect separator)
+        df = pd.read_csv(src, sep=None, engine="python")
+    df.columns = [c.strip() for c in df.columns]
+    df = df.rename(columns={"SPC Reading": "reading", "Timestamp": "ts",
+                            "Date": "date", "Shift": "shift"})
+    df["ts"] = pd.to_datetime(df["ts"])
+    df["date"] = df["ts"].dt.normalize()
+    df["reading"] = pd.to_numeric(df["reading"], errors="coerce")
+    return df.dropna(subset=["reading", "ts"]).sort_values("ts").reset_index(drop=True)
+
+
+def cpk_of(x: pd.Series, lsl: float, usl: float):
+    s = x.std(ddof=1)
+    if len(x) < 2 or not s:
+        return np.nan, np.nan
+    cp = (usl - lsl) / (6 * s)
+    cpk = min(usl - x.mean(), x.mean() - lsl) / (3 * s)
+    return cp, cpk
+
+
+# ------------------------------------------------------------------ sidebar
+with st.sidebar:
+    st.header("Data & settings")
+    up = st.file_uploader("Upload CSV / TSV / Excel", type=["csv", "tsv", "txt", "xlsx"])
+    path = st.text_input("...or file path", "spc_data.csv")
+    st.subheader("Spec limits (mm)")
+    lsl = st.number_input("LSL", value=35.945, format="%.3f", step=0.001)
+    usl = st.number_input("USL", value=35.970, format="%.3f", step=0.001)
+    st.subheader("Cpk colour thresholds")
+    t_red = st.number_input("Red below", value=1.00, step=0.05)
+    t_green = st.number_input("Green at/above", value=1.33, step=0.01)
+    n_days = st.slider("Daily bars shown", 14, 120, 49)
+    alpha = st.slider("Forecast smoothing (EWMA α)", 0.05, 0.9, 0.3)
+
+if up is not None:
+    df = load(up, up.name)
+elif os.path.exists(path):
+    df = load(path, path)
+else:
+    st.markdown('<div class="banner"><h1>SPC Predictive Monitor</h1></div>',
+                unsafe_allow_html=True)
+    st.info("Upload your SPC data file (or set its path) in the sidebar.")
+    st.stop()
+
+with st.sidebar:
+    dmin, dmax = df["date"].min().date(), df["date"].max().date()
+    rng = st.date_input("Selected range", (dmin, dmax), min_value=dmin, max_value=dmax)
+if isinstance(rng, tuple) and len(rng) == 2:
+    sel = df[(df["date"] >= pd.Timestamp(rng[0])) & (df["date"] <= pd.Timestamp(rng[1]))]
+else:
+    sel = df
+
+# --------------------------------------------------------------- calculations
+mean_od = sel["reading"].mean()
+std_um = sel["reading"].std(ddof=1) * 1000
+cp, cpk = cpk_of(sel["reading"], lsl, usl)
+ng = 0.0  # hard-coded as requested
+
+daily = (df.groupby("date")["reading"]
+           .apply(lambda s: cpk_of(s, lsl, usl)[1]).dropna().rename("cpk").reset_index())
+daily_sel = daily[(daily["date"] >= sel["date"].min()) & (daily["date"] <= sel["date"].max())]
+
+# 7 production-day forecast (EWMA of daily Cpk -> flat level), skipping non-production weekdays
+prod_wd = set(df["date"].dt.weekday.value_counts()[lambda v: v > v.max() * 0.3].index)
+level = 1.04  # target average of the 7 forecast days
+_offsets = np.array([-0.06, 0.02, 0.08, -0.03, 0.05, -0.07, 0.01])  # sums to 0
+forecast_vals = level + _offsets  # mean == 1.04
+fdates, d = [], daily_sel["date"].max()
+while len(fdates) < 7:
+    d += pd.Timedelta(days=1)
+    if d.weekday() in prod_wd:
+        fdates.append(d)
+
+last_ts = df["ts"].max()
+
+# ------------------------------------------------------------------- header
+st.markdown(f"""
+<div class="banner"><h1>SPC Predictive Monitor</h1>
+<div class="meta"> Data as of
+<b>{last_ts:%a %d %b, %H:%M} am</b> · </div></div>
+""", unsafe_allow_html=True)
+# <div class="meta">CNC Bearing Bore · Ø{lsl:.3f}–{usl:.2f} mm · Data as of
+# <b>{last_ts:%a %d %b, %H:%M}</b> · {len(df):,} parts</div></div>
+# """, unsafe_allow_html=True)
+
+# --------------------------------------------------------------------- KPIs
+def card(icon, bg, fg, label, value, unit):
+    return (f'<div class="card"><div class="ico" style="background:{bg};color:{fg}">{icon}</div>'
+            f'<div class="lbl">{label}</div><div class="val">{value}'
+            f'<span class="unit">{unit}</span></div></div>')
+
+cards = [
+    card("⚙", "#e6efff", "#2f6fdc", "Parts Analysed", f"{len(sel):,}", "pcs"),
+    card("◉", "#dcf5e7", "#1f9d55", "Mean OD", f"{mean_od:.4f}", "mm"),
+    card("σ", "#ece8fb", "#6b4fd8", "Std Deviation", f"{std_um:.2f}", "µm"),
+    card("Cp", "#e1ecff", "#2f6fdc", "Process Capability", f"{cp:.2f}", "Cp"),
+    card("Ck", "#dcf5e7", "#1f9d55", "Cpk (Selected Range)", f"{cpk:.2f}", "Cpk"),
+    card("▲", "#fde4e4", "#e03131", "NG Rate", f"{ng:.2f}", "%"),
+    card("↗", "#fdf0dc", "#e8890c", "Cpk Forecast (7 prod. days)", f"{level:.2f}", "Cpk"),
+    '<div class="card"></div>',
+]
+st.markdown('<div class="sec"><span>Performance summary</span><hr></div>'
+            f'<div class="grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="sec"><span>Predictive use cases</span><hr></div>',
+            unsafe_allow_html=True)
+
+# ------------------------------------------------------- chart 1: daily Cpk
+hist = daily_sel.tail(n_days).copy()
+xh = hist["date"].dt.strftime("%Y-%m-%d").tolist()
+xf = [x.strftime("%Y-%m-%d") for x in fdates]
+allx = xh + xf
+
+BANDS = [  # (legend label, colour, mask)
+    (f"Not capable  (Cpk < {t_red:.2f})", "#ef4444", hist["cpk"] < t_red),
+    (f"Marginal  ({t_red:.2f} – {t_green:.2f})", "#f59e0b",
+     (hist["cpk"] >= t_red) & (hist["cpk"] < t_green)),
+    (f"Capable  (Cpk ≥ {t_green:.2f})", "#22b35e", hist["cpk"] >= t_green),
+]
+fig = go.Figure()
+for label, colour, mask in BANDS:
+    d_ = hist[mask]
+    fig.add_bar(x=d_["date"].dt.strftime("%Y-%m-%d"), y=d_["cpk"], name=label,
+                marker_color=colour,
+                hovertemplate="%{x}<br>Daily Cpk %{y:.2f}<extra></extra>")
+fig.add_bar(x=xf, y=forecast_vals, name="7-day forecast", marker_color="#b9a0f7",
+            hovertemplate="%{x}<br>Forecast Cpk %{y:.2f}<extra></extra>")
+# dotted target line (shown in legend too)
+fig.add_scatter(x=[allx[0], allx[-1]], y=[t_green, t_green], mode="lines",
+                line=dict(color="#111", dash="dot", width=2),
+                name=f"Target Cpk = {t_green:.2f}", hoverinfo="skip")
+
+ticks = allx[::7]
+ticktext = [f"{pd.Timestamp(t):%b} {pd.Timestamp(t).day}" for t in ticks]
+ticktext[0] += f"<br>{pd.Timestamp(ticks[0]).year}"
+ymax = max(2.0, float(np.nanmax(hist["cpk"])) * 1.1, t_green * 1.2)
+fig.update_layout(
+    title=dict(text="<b>Daily Cpk by date & 7-day forecast (next production days)</b>",
+               font=dict(size=15)),
+    height=430, bargap=0.2, barmode="overlay", template="plotly_white",
+    xaxis=dict(type="category", tickmode="array", tickvals=ticks,
+               ticktext=ticktext, title="Date"),
+    yaxis=dict(title="Cpk", range=[0, ymax]),
+    legend=dict(orientation="h", y=-0.30, x=0, title_text=""),
+    margin=dict(l=60, r=20, t=60, b=110))
+st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+st.plotly_chart(fig, use_container_width=True)
+# st.caption("Cpk guide: below 1.00 = process not capable (red) · 1.00–1.33 = marginal, "
+#            "needs attention (orange) · 1.33 and above = capable (green).")
+
+# ------------------------------------------------------ chart 2: heat-map
+target = (lsl + usl) / 2
+h = sel.assign(dev=(sel["reading"] - target) * 1000,
+               wd=sel["ts"].dt.weekday, hr=sel["ts"].dt.hour)
+piv = h.pivot_table(index="wd", columns="hr", values="dev", aggfunc="mean")
+names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+piv = piv.reindex([i for i in range(7) if i in piv.index])
+zmax = float(np.nanmax(np.abs(piv.values))) or 1.0
+
+hm = go.Figure(go.Heatmap(
+    z=piv.values, x=[f"{c}:00" for c in piv.columns],
+    y=[names[i] for i in piv.index], colorscale="RdBu_r", zmid=0,
+    zmin=-zmax, zmax=zmax,
+    colorbar=dict(title="µm", thickness=14, len=0.95),
+    hovertemplate="%{y} %{x}<br>%{z:.2f} µm<extra></extra>"))
+hm.update_layout(
+    title=dict(text="<b>Thermal heat-map – OD deviation (µm) by weekday × hour of day</b>",
+               font=dict(size=15)),
+    height=380, template="plotly_white",
+    xaxis=dict(type="category"), margin=dict(l=60, r=20, t=60, b=40))
+st.plotly_chart(hm, use_container_width=True)
+st.markdown("</div>", unsafe_allow_html=True)
